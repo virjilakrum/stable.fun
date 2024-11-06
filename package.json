@@ -10,12 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@etherfuse/stablebond-sdk": "^1.0.13",
     "@solana/wallet-adapter-base": "^0.9.23",
     "@solana/wallet-adapter-react": "^0.15.35",
     "@solana/wallet-adapter-react-ui": "^0.9.34",
     "@solana/wallet-adapter-wallets": "^0.19.25",
     "@solana/web3.js": "^1.91.1",
-    "@etherfuse/stablebond-sdk": "^1.0.0",
+    "@switchboard-xyz/solana.js": "^3.2.5",
+    "bn.js": "^5.2.1",
     "lucide-react": "^0.344.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
