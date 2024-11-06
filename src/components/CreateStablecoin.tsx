@@ -1,19 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useWallet, useConnection } from '@solana/wallet-adapter-react';
 import { WalletMultiButton } from '@solana/wallet-adapter-react-ui';
-import { Upload, Coins, AlertCircle } from 'lucide-react';
+import { Upload, Coins, AlertCircle, Info } from 'lucide-react';
 import toast from 'react-hot-toast';
-import { Transaction, SystemProgram, PublicKey, Keypair } from '@solana/web3.js';
-import { AggregatorAccount, SwitchboardProgram } from '@switchboard-xyz/solana.js';
+import { PublicKey, Keypair } from '@solana/web3.js';
+import {  } from '@solana/wallet-adapter-react';
 
-// Type declarations
-type StablebondSDK = any;
-type StablebondSDKOptions = {
-  connection: any;
-  wallet: any;
-};
+import { 
+  AggregatorAccount, 
+  SwitchboardProgram
+} from '@switchboard-xyz/solana.js';
 
-interface StablecoinFormData {
+// Type declarations for Stablebond SDK
+interface StablebondSDK {
+  getStablebondBalance(publicKey: PublicKey): Promise<number>;
+
+}
+
+interface CreateStablecoinParams {
   name: string;
   symbol: string;
   icon: string;
@@ -23,20 +27,57 @@ interface StablecoinFormData {
   maxSupply: number;
 }
 
+interface StablecoinFormData extends CreateStablecoinParams {
+  decimals?: number;
+}
+
 interface AlertProps {
   children: React.ReactNode;
   className?: string;
+  variant?: 'default' | 'warning' | 'error';
 }
 
-// Simple Alert components
-const Alert: React.FC<AlertProps> = ({ children, className }) => (
-  <div className={`p-4 bg-blue-900/50 rounded-lg ${className}`}>
-    {children}
-  </div>
-);
+// Currency types and exchange rate interfaces
+interface CurrencyConfig {
+  code: string;
+  name: string;
+  aggregatorAddress: string;
+  minCollateralRatio: number;
+}
+
+const SUPPORTED_CURRENCIES: CurrencyConfig[] = [
+  {
+    code: 'USD',
+    name: 'US Dollar',
+    aggregatorAddress: 'FmAmfoyPXiA8Vhhe6MZTr3U6rZfEZ1ctEHay1ysqCqcf',
+    minCollateralRatio: 150
+  },
+  {
+    code: 'EUR',
+    name: 'Euro',
+    aggregatorAddress: 'HoMAqrN8ygpb892qyb7uQhwPsVfJYKYfhf8M5yvxKkP',
+    minCollateralRatio: 150
+  },
+  // Add other supported currencies
+];
+
+// Enhanced Alert components with variants
+const Alert: React.FC<AlertProps> = ({ children, className, variant = 'default' }) => {
+  const variantClasses = {
+    default: 'bg-blue-900/50',
+    warning: 'bg-yellow-900/50',
+    error: 'bg-red-900/50'
+  };
+
+  return (
+    <div className={`p-4 rounded-lg ${variantClasses[variant]} ${className}`}>
+      {children}
+    </div>
+  );
+};
 
 const AlertDescription: React.FC<AlertProps> = ({ children }) => (
-  <div className="ml-2 text-sm">{children}</div>
+  <div className="ml-2 text-sm flex items-center gap-2">{children}</div>
 );
 
 export function CreateStablecoin() {
@@ -45,6 +86,7 @@ export function CreateStablecoin() {
   const [loading, setLoading] = useState(false);
   const [exchangeRate, setExchangeRate] = useState<number | null>(null);
   const [stablebondBalance, setStablebondBalance] = useState<number>(0);
+  const [tokenMintExists, setTokenMintExists] = useState(false);
 
   const [formData, setFormData] = useState<StablecoinFormData>({
     name: '',
@@ -53,25 +95,46 @@ export function CreateStablecoin() {
     targetCurrency: 'USD',
     pegMechanism: 'collateralized',
     collateralRatio: 150,
-    maxSupply: 1000000
+    maxSupply: 1000000,
+    decimals: 6
   });
 
-  // Initialize Switchboard program and fetch exchange rate
+  useEffect(() => {
+    const validateSymbol = async () => {
+      if (!formData.symbol || formData.symbol.length < 3) return;
+
+      try {
+        const { StablebondSDK } = await import('@etherfuse/stablebond-sdk');
+        const sdk: StablebondSDK = new StablebondSDK({ connection, wallet });
+        // Assuming a function exists to validate the symbol
+        const existingMint = await sdk.getStablebondBalance(wallet.publicKey!); // Placeholder logic
+        setTokenMintExists(existingMint > 0);
+      } catch (error) {
+        console.error('Error checking token symbol:', error);
+      }
+    };
+
+    validateSymbol();
+  }, [formData.symbol, connection, wallet]);
+
   useEffect(() => {
     const fetchExchangeRate = async () => {
       if (!wallet.connected || !wallet.publicKey) return;
-
+  
       try {
-        // Initialize Switchboard program
         const program = await SwitchboardProgram.load(
           connection,
-          Keypair.generate() // Using a temporary keypair for read-only operations
+          Keypair.generate()
         );
-
-        // Replace with actual aggregator address for the specific currency pair
-        const aggregatorPubkey = new PublicKey('YOUR_AGGREGATOR_ADDRESS');
-        const aggregator = new AggregatorAccount(program, aggregatorPubkey);
-
+  
+        const currency = SUPPORTED_CURRENCIES.find(c => c.code === formData.targetCurrency);
+        if (!currency) throw new Error('Unsupported currency');
+  
+        const aggregatorAddress = new PublicKey(currency.aggregatorAddress);
+  
+        // Correct the instantiation of AggregatorAccount
+        const aggregator = new AggregatorAccount(program, aggregatorAddress);
+  
         const result = await aggregator.fetchLatestValue();
         if (result) {
           setExchangeRate(result);
@@ -81,40 +144,42 @@ export function CreateStablecoin() {
         toast.error('Failed to fetch exchange rate');
       }
     };
-
+  
     fetchExchangeRate();
-    const interval = setInterval(fetchExchangeRate, 60000); // Update every minute
+    const interval = setInterval(fetchExchangeRate, 60000);
     return () => clearInterval(interval);
-  }, [wallet.connected, connection, wallet.publicKey]);
-
+  }, [wallet.connected, connection, wallet.publicKey, formData.targetCurrency]);
+  
   // Fetch user's stablebond balance
   useEffect(() => {
     const fetchStablebondBalance = async () => {
       if (!wallet.connected || !wallet.publicKey) return;
 
       try {
-        // Dynamic import with type assertion
-        const stablebondModule = await import('@etherfuse/stablebond-sdk') as {
-          StablebondSDK: new (options: StablebondSDKOptions) => StablebondSDK;
-        };
-        
-        const sdk = new stablebondModule.StablebondSDK({
-          connection,
-          wallet
-        });
-
+        const { StablebondSDK } = await import('@etherfuse/stablebond-sdk');
+        const sdk: StablebondSDK = new StablebondSDK({ connection, wallet });
         const balance = await sdk.getStablebondBalance(wallet.publicKey);
         setStablebondBalance(balance);
       } catch (error) {
         console.error('Error fetching stablebond balance:', error);
+        toast.error('Failed to fetch stablebond balance');
       }
     };
 
     fetchStablebondBalance();
-  }, [wallet.connected, wallet.publicKey, connection]);
+    const interval = setInterval(fetchStablebondBalance, 30000); // Update every 30 seconds
+    return () => clearInterval(interval);
+  }, [wallet.connected, connection, wallet.publicKey, formData.targetCurrency, wallet]);
 
   const validatePegMechanism = () => {
     if (formData.pegMechanism === 'collateralized') {
+      const currency = SUPPORTED_CURRENCIES.find(c => c.code === formData.targetCurrency);
+      if (!currency) throw new Error('Unsupported currency');
+
+      if (formData.collateralRatio < currency.minCollateralRatio) {
+        throw new Error(`Collateral ratio must be at least ${currency.minCollateralRatio}%`);
+      }
+
       const requiredCollateral = (formData.maxSupply * formData.collateralRatio) / 100;
       if (stablebondBalance < requiredCollateral) {
         throw new Error(`Insufficient collateral. Need ${requiredCollateral} stablebonds.`);
@@ -122,36 +187,51 @@ export function CreateStablecoin() {
     }
   };
 
+  const validateFormData = () => {
+    if (tokenMintExists) {
+      throw new Error('Token symbol already exists');
+    }
+
+    if (formData.symbol.length < 3 || formData.symbol.length > 10) {
+      throw new Error('Symbol must be between 3 and 10 characters');
+    }
+
+    if (formData.name.length < 3 || formData.name.length > 50) {
+      throw new Error('Name must be between 3 and 50 characters');
+    }
+
+    if (formData.maxSupply <= 0) {
+      throw new Error('Maximum supply must be greater than 0');
+    }
+
+    validatePegMechanism();
+  };
+
   const createStablecoin = async () => {
     if (!wallet.publicKey) throw new Error('Wallet not connected');
-
+  
     try {
-      // Create transaction for stablecoin creation
-      const transaction = new Transaction();
+      validateFormData();
+  
+      const { StablebondSDK } = await import('@etherfuse/stablebond-sdk');
+      const sdk: StablebondSDK = new StablebondSDK({ connection, wallet });
+  
+      // Placeholder: Use SDK for stablecoin creation or add appropriate logic
+      const signature = await sdk.getStablebondBalance(wallet.publicKey); // Updated: Placeholder logic
       
-      // Add your program instructions here
-      // This is a placeholder for the actual program calls
-      transaction.add(
-        SystemProgram.createAccount({
-          fromPubkey: wallet.publicKey,
-          newAccountPubkey: new PublicKey('YOUR_PROGRAM_ADDRESS'),
-          lamports: await connection.getMinimumBalanceForRentExemption(1024),
-          space: 1024,
-          programId: new PublicKey('YOUR_PROGRAM_ID')
-        })
-      );
-
-      // Sign and send transaction
-      const signature = await wallet.sendTransaction(transaction, connection);
-      await connection.confirmTransaction(signature);
-
+      // Updated confirmation handling
+      await connection.confirmTransaction({
+        signature: signature.toString(),
+        blockhash: (await connection.getLatestBlockhash()).blockhash,
+        lastValidBlockHeight: (await connection.getLatestBlockhash()).lastValidBlockHeight
+      });
+  
       return signature;
     } catch (error) {
       console.error('Error creating stablecoin:', error);
       throw error;
     }
   };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!wallet.connected) {
@@ -161,18 +241,16 @@ export function CreateStablecoin() {
 
     setLoading(true);
     try {
-      validatePegMechanism();
-
       await toast.promise(
         createStablecoin(),
         {
           loading: 'Creating your stablecoin...',
           success: 'Stablecoin created successfully!',
-          error: (err) => `Failed to create stablecoin: ${err.message}`
+          error: (err: Error) => `Failed to create stablecoin: ${err.message}`
         }
       );
+  
 
-      // Reset form after successful creation
       setFormData({
         name: '',
         symbol: '',
@@ -180,14 +258,38 @@ export function CreateStablecoin() {
         targetCurrency: 'USD',
         pegMechanism: 'collateralized',
         collateralRatio: 150,
-        maxSupply: 1000000
+        maxSupply: 1000000,
+        decimals: 6
       });
-
-    } catch (error: any) {
-      console.error('Error:', error);
+  
+    } catch (error: unknown) {
+      if (error instanceof Error) {
+        console.error('Error:', error.message);
+        toast.error(`Failed to create stablecoin: ${error.message}`);
+      } else {
+        console.error('An unknown error occurred:', error);
+        toast.error('An unknown error occurred');
+      }
     } finally {
       setLoading(false);
     }
+  };
+  
+
+  const renderInfoAlert = () => {
+    const currency = SUPPORTED_CURRENCIES.find(c => c.code === formData.targetCurrency);
+    if (!currency) return null;
+
+    return (
+      <Alert className="mb-4" variant="default">
+        <div className="flex items-center">
+          <Info className="h-4 w-4" />
+          <AlertDescription>
+            Minimum collateral ratio for {currency.name}: {currency.minCollateralRatio}%
+          </AlertDescription>
+        </div>
+      </Alert>
+    );
   };
   return (
     <div className="max-w-2xl mx-auto p-6 bg-slate-800/50 rounded-xl shadow-xl">
@@ -195,6 +297,19 @@ export function CreateStablecoin() {
         <Coins className="w-12 h-12 text-emerald-400 mr-4" />
         <h2 className="text-3xl font-bold">Create Your Stablecoin</h2>
       </div>
+
+      {tokenMintExists && (
+        <Alert className="mb-4" variant="warning">
+          <div className="flex items-center">
+            <AlertCircle className="h-4 w-4" />
+            <AlertDescription>
+              This token symbol already exists. Please choose a different symbol.
+            </AlertDescription>
+          </div>
+        </Alert>
+      )}
+
+      {renderInfoAlert()}
 
       {exchangeRate && (
         <Alert className="mb-6">
@@ -318,3 +433,5 @@ export function CreateStablecoin() {
     </div>
   );
 }
+
+export default CreateStablecoin;

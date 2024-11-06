@@ -3,7 +3,7 @@ import { Toaster } from 'react-hot-toast';
 import { WalletContextProvider } from './components/WalletContextProvider';
 import { CreateStablecoin } from './components/CreateStablecoin';
 import { StablecoinList } from './components/StablecoinList';
-import { Coins, Lock, Rocket, ArrowRight, TrendingUp, Shield } from 'lucide-react';
+import { Coins, Lock, ArrowRight, TrendingUp, Shield } from 'lucide-react';
 
 function App() {
   return (
